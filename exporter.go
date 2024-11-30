@@ -19,6 +19,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/prometheus/prometheus/prompb"
+	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/config/configretry"
@@ -27,6 +28,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
@@ -269,6 +271,13 @@ func (prwe *prwExporter) export(ctx context.Context, requests []*prompb.WriteReq
 }
 
 func (prwe *prwExporter) execute(ctx context.Context, writeReq *prompb.WriteRequest) error {
+	cl := client.FromContext(ctx)
+	tenantIdA := cl.Metadata.Get("x-tenant")
+	if len(tenantIdA) == 0 {
+		return errors.New("unable to get tenant")
+	}
+	tenantId := tenantIdA[0]
+
 	// Uses proto.Marshal to convert the WriteRequest into bytes array
 	data, errMarshal := proto.Marshal(writeReq)
 	if errMarshal != nil {
@@ -288,8 +297,11 @@ func (prwe *prwExporter) execute(ctx context.Context, writeReq *prompb.WriteRequ
 			// continue
 		}
 
+		url := prwe.endpointURL.String()
+		url = strings.Replace(url, "TENANT", tenantId, -1)
+
 		// Create the HTTP POST request to send to the endpoint
-		req, err := http.NewRequestWithContext(ctx, "POST", prwe.endpointURL.String(), bytes.NewReader(compressedData))
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(compressedData))
 		if err != nil {
 			return backoff.Permanent(consumererror.NewPermanent(err))
 		}
